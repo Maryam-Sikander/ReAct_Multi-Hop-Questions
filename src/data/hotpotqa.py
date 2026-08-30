@@ -5,62 +5,36 @@ import json
 import random
 from pathlib import Path
 
-import requests
-from tqdm import tqdm
+from datasets import load_dataset
 
-HOTPOTQA_DEV_URL = "http://curtis.ml.cmu.edu/datasets/hotpot/hotpot_dev_distractor_v1.json"
-
-RAW_DIR = Path(__file__).resolve().parents[2] / "data" / "raw"
 PROCESSED_DIR = Path(__file__).resolve().parents[2] / "data" / "processed"
 
 
-def download_raw(force: bool = False) -> Path:
-    RAW_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = RAW_DIR / "hotpot_dev_distractor_v1.json"
-    if out_path.exists() and not force:
-        print(f"already have it: {out_path}")
-        return out_path
-
-    print("downloading HotpotQA distractor dev set (~40MB)...")
-    resp = requests.get(HOTPOTQA_DEV_URL, stream=True, timeout=120)
-    resp.raise_for_status()
-    total = int(resp.headers.get("content-length", 0))
-    with open(out_path, "wb") as f, tqdm(total=total, unit="B", unit_scale=True) as bar:
-        for chunk in resp.iter_content(chunk_size=8192):
-            f.write(chunk)
-            bar.update(len(chunk))
-    return out_path
-
-
-def sample_questions(raw_path: Path, n: int, seed: int, hard_only: bool = True) -> list[dict]:
-    with open(raw_path) as f:
-        data = json.load(f)
+def sample_questions(n: int, seed: int, hard_only: bool = True) -> list[dict]:
+    ds = load_dataset("hotpot_qa", "distractor", split="validation")
 
     if hard_only:
-        # 'hard' level questions are the ones that actually need multi-hop
-        # reasoning rather than being answerable from a single paragraph.
-        pool = [q for q in data if q.get("level") == "hard"]
+        pool = [q for q in ds if q["level"] == "hard"]
         if len(pool) < n:
-            print(f"only {len(pool)} hard questions available, falling back to full pool")
-            pool = data
+            print(f"only {len(pool)} hard questions in the set, using the full pool instead")
+            pool = list(ds)
     else:
-        pool = data
+        pool = list(ds)
 
     rng = random.Random(seed)
     sample = rng.sample(pool, min(n, len(pool)))
 
-    # keep only what the agent and the analysis actually need
-    trimmed = []
-    for q in sample:
-        trimmed.append({
-            "id": q["_id"],
+    return [
+        {
+            "id": q["id"],
             "question": q["question"],
             "answer": q["answer"],
-            "type": q.get("type"),
-            "level": q.get("level"),
-            "supporting_facts": q.get("supporting_facts", []),
-        })
-    return trimmed
+            "type": q["type"],
+            "level": q["level"],
+            "supporting_facts": q["supporting_facts"],
+        }
+        for q in sample
+    ]
 
 
 def main():
@@ -68,12 +42,10 @@ def main():
     parser.add_argument("--n", type=int, default=100, help="number of questions to sample")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--hard-only", action="store_true", default=True)
-    parser.add_argument("--force-download", action="store_true")
     parser.add_argument("--out", type=str, default=None, help="output filename override")
     args = parser.parse_args()
 
-    raw_path = download_raw(force=args.force_download)
-    sample = sample_questions(raw_path, n=args.n, seed=args.seed, hard_only=args.hard_only)
+    sample = sample_questions(n=args.n, seed=args.seed, hard_only=args.hard_only)
 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     out_name = args.out or f"hotpot_sample_n{args.n}_seed{args.seed}.jsonl"
