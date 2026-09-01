@@ -11,7 +11,8 @@ PROCESSED_DIR = Path(__file__).resolve().parents[2] / "data" / "processed"
 
 
 def sample_questions(n: int, seed: int, hard_only: bool = True) -> list[dict]:
-    ds = load_dataset("hotpot_qa", "distractor", split="validation")
+    # Updated to full canonical dataset path to prevent URI resolution errors
+    ds = load_dataset("hotpotqa/hotpot_qa", "distractor", split="validation")
 
     if hard_only:
         pool = [q for q in ds if q["level"] == "hard"]
@@ -41,7 +42,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n", type=int, default=100, help="number of questions to sample")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--hard-only", action="store_true", default=True)
+    parser.add_argument(
+        "--hard-only",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="only sample hard questions (use --no-hard-only to disable)",
+    )
     parser.add_argument("--out", type=str, default=None, help="output filename override")
     args = parser.parse_args()
 
