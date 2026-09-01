@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import dataclasses
 import re
 
@@ -8,8 +6,7 @@ from src.tools.wiki_search import WikiEnv
 from src.utils.llm_client import LLMClient
 from src.utils.token_tracker import TokenTracker
 
-ACTION_RE = re.compile(r"Action:\s*(\w+)\[(.*?)\]", re.DOTALL)
-THOUGHT_RE = re.compile(r"Thought:\s*(.*?)(?=\nAction:|\Z)", re.DOTALL)
+ACTION_RE = re.compile(r"(\w+)\[(.*?)\]", re.DOTALL)
 
 
 @dataclasses.dataclass
@@ -19,6 +16,7 @@ class HopRecord:
     action_type: str
     action_arg: str
     observation: str
+    was_badcall: bool = False
 
 
 @dataclasses.dataclass
@@ -26,53 +24,66 @@ class TrajectoryResult:
     question_id: str
     question: str
     gold_answer: str
-    predicted_answer: str | None
-    hops: list[HopRecord]
-    stopped_reason: str  # "finished" | "max_hops" | "parse_error"
+    predicted_answer: str
+    hops: list
+    stopped_reason: str
+    n_calls: int
+    n_badcalls: int
     token_usage: dict
 
 
 class ReActAgent:
-    def __init__(self, llm: LLMClient, max_hops: int = 7):
+    def __init__(self, llm: LLMClient, max_hops=7):
         self.llm = llm
         self.max_hops = max_hops
 
-    def run(self, question_id: str, question: str, gold_answer: str) -> TrajectoryResult:
+    def run(self, question_id, question, gold_answer):
         env = WikiEnv()
         tracker = TokenTracker()
         trajectory_text = ""
-        hops: list[HopRecord] = []
+        hops = []
         predicted_answer = None
         stopped_reason = "max_hops"
+        n_calls = 0
+        n_badcalls = 0
 
         for hop_idx in range(1, self.max_hops + 1):
-            prompt = build_prompt(question, trajectory_text)
-            response = self.llm.complete(prompt, stop=["\nObservation"])
+            prompt = build_prompt(question, trajectory_text) + f"Thought {hop_idx}:"
+            response = self.llm.complete(prompt, stop=[f"\nObservation {hop_idx}:"])
             tracker.log("agent", hop_idx, response.prompt_tokens, response.completion_tokens)
+            n_calls += 1
 
             generated = response.text.strip()
-            thought_match = THOUGHT_RE.search(generated)
-            action_match = ACTION_RE.search(generated)
+            was_badcall = False
 
+            try:
+                thought, action_str = generated.split(f"\nAction {hop_idx}:", 1)
+                thought, action_str = thought.strip(), action_str.strip()
+            except ValueError:
+                # model ran thought and action together, ask again for just the action
+                was_badcall = True
+                n_badcalls += 1
+                n_calls += 1
+                thought = generated.split("\n")[0].strip()
+                retry_prompt = build_prompt(question, trajectory_text) + f"Thought {hop_idx}: {thought}\nAction {hop_idx}:"
+                retry = self.llm.complete(retry_prompt, stop=["\n"])
+                tracker.log("agent", hop_idx, retry.prompt_tokens, retry.completion_tokens)
+                action_str = retry.text.strip()
+
+            action_match = ACTION_RE.search(action_str)
             if not action_match:
                 stopped_reason = "parse_error"
-                hops.append(HopRecord(
-                    hop=hop_idx,
-                    thought=thought_match.group(1).strip() if thought_match else generated,
-                    action_type="PARSE_ERROR",
-                    action_arg="",
-                    observation=f"Could not parse an Action from: {generated!r}",
-                ))
+                hops.append(HopRecord(hop_idx, thought, "PARSE_ERROR", "",
+                                       f"could not parse action from: {action_str!r}", was_badcall))
                 break
 
-            thought = thought_match.group(1).strip() if thought_match else ""
-            action_type = action_match.group(1).strip()
+            action_type = action_match.group(1).strip().capitalize()
             action_arg = action_match.group(2).strip()
 
             if action_type == "Finish":
                 predicted_answer = action_arg
                 stopped_reason = "finished"
-                hops.append(HopRecord(hop_idx, thought, action_type, action_arg, observation=""))
+                hops.append(HopRecord(hop_idx, thought, action_type, action_arg, "", was_badcall))
                 break
 
             if action_type == "Search":
@@ -80,21 +91,10 @@ class ReActAgent:
             elif action_type == "Lookup":
                 observation = env.lookup(action_arg)
             else:
-                observation = f"Unrecognized action type: {action_type}"
+                observation = f"unrecognized action type: {action_type}"
 
-            hops.append(HopRecord(hop_idx, thought, action_type, action_arg, observation))
-            trajectory_text += (
-                f"Thought: {thought}\n"
-                f"Action: {action_type}[{action_arg}]\n"
-                f"Observation: {observation}\n"
-            )
+            hops.append(HopRecord(hop_idx, thought, action_type, action_arg, observation, was_badcall))
+            trajectory_text += f"Thought {hop_idx}: {thought}\nAction {hop_idx}: {action_type}[{action_arg}]\nObservation {hop_idx}: {observation}\n"
 
-        return TrajectoryResult(
-            question_id=question_id,
-            question=question,
-            gold_answer=gold_answer,
-            predicted_answer=predicted_answer,
-            hops=hops,
-            stopped_reason=stopped_reason,
-            token_usage=tracker.to_dict(),
-        )
+        return TrajectoryResult(question_id, question, gold_answer, predicted_answer,
+                                 hops, stopped_reason, n_calls, n_badcalls, tracker.to_dict())

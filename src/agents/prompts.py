@@ -1,75 +1,49 @@
-"""
-The few-shot prompt for the baseline ReAct agent.
-
-I wrote these exemplars myself rather than lifting the paper's appendix —
-same format (Question / Thought / Action / Observation, same two actions),
-different questions. Keeps the replication faithful to the *method*
-without reproducing anyone else's text.
-"""
-
-INSTRUCTIONS = """Solve a question answering task with interleaving Thought, \
-Action, Observation steps. Thought can reason about the current situation. \
-Action can be one of two types:
-(1) Search[entity], which searches the exact entity on Wikipedia and returns \
-the first few sentences if it exists, or suggests similar entities if it \
-does not.
-(2) Lookup[keyword], which returns the next sentence containing keyword in \
-the current passage, like Ctrl+F on the page.
-You may take as many steps as needed. When you know the answer, use:
-Finish[answer]
+INSTRUCTIONS = """Answer the question by interleaving numbered Thought, Action, and Observation steps.
+Action is one of three types:
+(1) Search[entity] - looks up the entity on Wikipedia, returns the opening paragraph if it exists, or similar titles if not.
+(2) Lookup[keyword] - returns the next sentence on the current page containing keyword.
+(3) Finish[answer] - gives the final answer and ends the task.
+Here are some examples.
 """
 
 FEWSHOT_EXAMPLES = """
 Question: What is the nationality of the director of the 1994 film that won the Palme d'Or at Cannes?
-Thought: I need to find which film won the Palme d'Or in 1994, then find its director, then that director's nationality.
-Action: Search[1994 Cannes Film Festival]
-Observation: The 1994 Cannes Film Festival awarded the Palme d'Or to Pulp Fiction, directed by Quentin Tarantino.
-Thought: The director is Quentin Tarantino. Now I need his nationality.
-Action: Search[Quentin Tarantino]
-Observation: Quentin Jerome Tarantino is an American film director, screenwriter, producer, and actor.
-Thought: Quentin Tarantino is American.
-Action: Finish[American]
+Thought 1: I need to find which film won the Palme d'Or in 1994, then its director, then his nationality.
+Action 1: Search[1994 Cannes Film Festival]
+Observation 1: The 1994 Cannes Film Festival awarded the Palme d'Or to Pulp Fiction, directed by Quentin Tarantino.
+Thought 2: The director is Quentin Tarantino. Now his nationality.
+Action 2: Search[Quentin Tarantino]
+Observation 2: Quentin Jerome Tarantino is an American film director, screenwriter, producer, and actor.
+Thought 3: He's American.
+Action 3: Finish[American]
 
-Question: The university where the inventor of the World Wide Web earned his degree is located in which city?
-Thought: I need to find who invented the World Wide Web, then where he earned his degree, then the city of that university.
-Action: Search[World Wide Web]
-Observation: The World Wide Web was invented by English computer scientist Tim Berners-Lee.
-Thought: Now I need to find where Tim Berners-Lee earned his degree.
-Action: Search[Tim Berners-Lee]
-Observation: Tim Berners-Lee studied physics at The Queen's College, Oxford, graduating in 1976.
-Thought: His degree is from Oxford. I need the city.
-Action: Lookup[Oxford]
-Observation: (Result 1/2) Tim Berners-Lee studied physics at The Queen's College, Oxford, graduating in 1976.
-Thought: Oxford is both the college's name and the city. The answer is Oxford.
-Action: Finish[Oxford]
+Question: The university where the inventor of the World Wide Web earned his degree is in which city?
+Thought 1: Find who invented the Web, then where he studied.
+Action 1: Search[World Wide Web]
+Observation 1: The World Wide Web was invented by English computer scientist Tim Berners-Lee.
+Thought 2: Now find where he studied.
+Action 2: Search[Tim Berners-Lee]
+Observation 2: Tim Berners-Lee studied physics at The Queen's College, Oxford, graduating in 1976.
+Thought 3: Oxford is both the college and the city.
+Action 3: Finish[Oxford]
 
-Question: Which of the two rivers that the city of Khartoum sits at the confluence of is longer?
-Thought: I need to find the two rivers meeting at Khartoum, then compare their lengths.
-Action: Search[Khartoum]
-Observation: Khartoum is the capital of Sudan, located at the confluence of the White Nile and the Blue Nile.
-Thought: Now I need to compare the lengths of the White Nile and the Blue Nile.
-Action: Search[White Nile]
-Observation: The White Nile is one of the two main tributaries of the Nile, with the other being the Blue Nile.
-Thought: I need a length figure. Let me look it up specifically.
-Action: Lookup[length]
-Observation: No mentions of [length] found.
-Action: Search[Blue Nile]
-Observation: The Blue Nile is approximately 1,400 km long, shorter than the White Nile's roughly 3,700 km.
-Thought: The White Nile is longer.
-Action: Finish[White Nile]
+Question: Which of the two rivers meeting at Khartoum is longer?
+Thought 1: Find the two rivers, then compare lengths.
+Action 1: Search[Khartoum]
+Observation 1: Khartoum is the capital of Sudan, at the confluence of the White Nile and the Blue Nile.
+Thought 2: Need lengths for both.
+Action 2: Search[White Nile]
+Observation 2: The White Nile is one of the two main tributaries of the Nile, the other being the Blue Nile.
+Thought 3: No length here, let me check directly.
+Action 3: Lookup[length]
+Observation 3: No mentions of [length] found.
+Thought 4: Try the Blue Nile page instead.
+Action 4: Search[Blue Nile]
+Observation 4: The Blue Nile is approximately 1,400 km long, shorter than the White Nile's roughly 3,700 km.
+Thought 5: White Nile is longer.
+Action 5: Finish[White Nile]
 """.strip()
 
 
-def build_prompt(question: str, trajectory: str) -> str:
-    """
-    trajectory is the accumulated Thought/Action/Observation text for this
-    question so far (empty on the first hop). The model is expected to
-    continue it with the next Thought/Action pair.
-    """
-    return (
-        f"{INSTRUCTIONS}\n\n"
-        f"Here are some examples.\n\n{FEWSHOT_EXAMPLES}\n\n"
-        f"Now answer this question.\n\n"
-        f"Question: {question}\n"
-        f"{trajectory}"
-    )
+def build_prompt(question, trajectory):
+    return f"{INSTRUCTIONS}\n\n{FEWSHOT_EXAMPLES}\n\nQuestion: {question}\n{trajectory}"
